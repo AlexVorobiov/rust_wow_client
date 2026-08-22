@@ -167,9 +167,9 @@ fn spawn_subject(
         return;
     };
     if frame >= BUILD_CAP_FRAMES {
+        let model_path = ctx.request.model_path.clone();
         ctx.fail(format!(
-            "model did not become renderable within {BUILD_CAP_FRAMES} frames: {}",
-            ctx.request.model_path
+            "model did not become renderable within {BUILD_CAP_FRAMES} frames: {model_path}"
         ));
         return;
     }
@@ -193,10 +193,8 @@ fn spawn_subject(
         include_aabb(&mut bounds, aabb);
     }
     if !bounds.is_valid() {
-        ctx.fail(format!(
-            "model has no usable rendered bounds: {}",
-            ctx.request.model_path
-        ));
+        let model_path = ctx.request.model_path.clone();
+        ctx.fail(format!("model has no usable rendered bounds: {model_path}"));
         return;
     }
 
@@ -225,10 +223,8 @@ fn spawn_subject(
     );
 
     if spawned.entities.is_empty() {
-        ctx.fail(format!(
-            "model produced no render entities: {}",
-            ctx.request.model_path
-        ));
+        let model_path = ctx.request.model_path.clone();
+        ctx.fail(format!("model produced no render entities: {model_path}"));
         return;
     }
     for entity in spawned.entities {
@@ -356,9 +352,9 @@ fn drive_capture(
         StudioPhase::Loading(frame) => StudioPhase::Loading(frame),
         StudioPhase::Settling(frame) => {
             if frame >= BUILD_CAP_FRAMES {
+                let view_name = StudioView::ALL[ctx.view].file_name();
                 ctx.fail(format!(
-                    "view {} never stabilized in {BUILD_CAP_FRAMES} frames",
-                    StudioView::ALL[ctx.view].file_name()
+                    "view {view_name} never stabilized in {BUILD_CAP_FRAMES} frames"
                 ));
                 return;
             }
@@ -379,13 +375,11 @@ fn drive_capture(
         }
         StudioPhase::Saving(frame) => {
             if frame >= SAVE_TIMEOUT_FRAMES {
-                ctx.fail(format!(
-                    "timed out saving {}",
-                    StudioView::ALL
-                        .get(ctx.view)
-                        .map(|v| v.file_name())
-                        .unwrap_or("unknown view")
-                ));
+                let view_name = StudioView::ALL
+                    .get(ctx.view)
+                    .map(|v| v.file_name())
+                    .unwrap_or("unknown view");
+                ctx.fail(format!("timed out saving {view_name}"));
                 return;
             }
             StudioPhase::Saving(frame + 1)
