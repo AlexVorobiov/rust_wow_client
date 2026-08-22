@@ -12,6 +12,9 @@ use benilla_world::modkeys::{dev_chord, DEV_CHORD};
 use crate::debug_panel::{overlay_text, MouseoverTarget, OVERLAY_FILL, OVERLAY_TEXT_DIM};
 use crate::ui_script::{InspectMode, UiInput};
 
+mod capture;
+pub(crate) use capture::M2StudioPlugin;
+
 const FRAMING_MARGIN: f32 = 1.12;
 const STUDIO_FOV: f32 = 45.0_f32.to_radians();
 
@@ -162,11 +165,13 @@ impl StudioBounds {
     }
 
     fn is_valid(&self) -> bool {
-        (0..3).all(|axis| {
+        let ordered = (0..3).all(|axis| {
             self.min[axis].is_finite()
                 && self.max[axis].is_finite()
-                && self.max[axis] > self.min[axis]
-        })
+                && self.max[axis] >= self.min[axis]
+        });
+        let non_zero = (0..3).any(|axis| self.max[axis] - self.min[axis] > f32::EPSILON);
+        ordered && non_zero
     }
 
     fn center(&self) -> [f32; 3] {
@@ -363,7 +368,10 @@ fn select_hovered_doodad(
     objects: Query<&WorldObject>,
     mut state: ResMut<RemasterState>,
 ) {
-    if !state.enabled || !buttons.just_pressed(MouseButton::Left) {
+    if !state.enabled
+        || !buttons.just_pressed(MouseButton::Left)
+        || matches!(state.status, RemasterCaptureStatus::Capturing)
+    {
         return;
     }
     let Some(entity) = mouseover.entity else {
@@ -380,9 +388,7 @@ fn select_hovered_doodad(
         Ok(selection) => {
             state.selection_message = None;
             state.selected = Some(selection);
-            if !matches!(state.status, RemasterCaptureStatus::Capturing) {
-                state.status = RemasterCaptureStatus::Idle;
-            }
+            state.status = RemasterCaptureStatus::Idle;
         }
         Err(message) => {
             state.selection_message = Some(message);
@@ -528,15 +534,11 @@ impl Plugin for RemasterPlugin {
             .init_resource::<RemasterProcess>()
             .add_systems(
                 Update,
-                (
-                    toggle_remaster,
-                    maintain_remaster_inspect,
-                    select_hovered_doodad,
-                    poll_capture,
-                )
+                (toggle_remaster, maintain_remaster_inspect, poll_capture)
                     .chain()
                     .after(UiInput),
             )
+            .add_systems(PostUpdate, select_hovered_doodad)
             .add_systems(EguiPrimaryContextPass, remaster_ui);
     }
 }
@@ -620,6 +622,16 @@ mod tests {
         assert_eq!(b.min, [-2.0, -4.0, 1.0]);
         assert_eq!(b.max, [5.0, 3.0, 7.0]);
         assert_eq!(b.center(), [1.5, -0.5, 4.0]);
+    }
+
+    #[test]
+    fn flat_bounds_are_usable() {
+        let b = StudioBounds {
+            min: [-2.0, -3.0, 0.0],
+            max: [2.0, 3.0, 0.0],
+        };
+        assert!(b.is_valid());
+        assert!(camera_distance(&b, [0.0, 0.0, -1.0], STUDIO_FOV, 1.0).is_some());
     }
 
     #[test]
