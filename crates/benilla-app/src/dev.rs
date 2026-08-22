@@ -27,6 +27,7 @@
 
 use bevy::prelude::*;
 
+#[cfg(feature = "dev")]
 mod m2studio;
 
 /// `WOW_CAPTURE=list` — the harness scenario names `scripts/visual.sh` reads, printed before any
@@ -87,9 +88,14 @@ impl Plugin for DevProbesPlugin {
         #[cfg(feature = "dev")]
         {
             // The capture harness drives one deterministic screenshot then exits — added last so it observes
-            // the fully-built app. Inert unless `$WOW_CAPTURE` is set.
+            // the fully-built app. M2 remaster capture owns a dedicated four-shot harness; every other
+            // `$WOW_CAPTURE` value stays on the existing single-shot CapturePlugin unchanged.
             if crate::run_mode::scenario_active() {
-                app.add_plugins(crate::capture::CapturePlugin);
+                if m2studio::capture_requested() {
+                    app.add_plugins(m2studio::M2StudioPlugin);
+                } else {
+                    app.add_plugins(crate::capture::CapturePlugin);
+                }
             }
             // The LIVE probe shot (orthogonal to the harness): `WOW_LIVE_SHOT=<png>` on a NORMAL connected
             // run writes one screenshot `WOW_LIVE_SHOT_AT` seconds (default 12) after startup and keeps
