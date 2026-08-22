@@ -1,0 +1,32 @@
+name: remaster-ci
+
+on:
+  push:
+    branches:
+      - feat/m2-remaster-capture
+
+permissions:
+  contents: read
+
+jobs:
+  remaster:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libudev-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libx11-dev \
+            libxi-dev \
+            libxcursor-dev \
+            libxrandr-dev
+      - name: Focused remaster tests
+        run: cargo test -p benilla-app m2studio --lib
