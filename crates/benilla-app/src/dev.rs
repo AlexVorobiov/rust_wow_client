@@ -27,6 +27,8 @@
 
 use bevy::prelude::*;
 
+mod m2studio;
+
 /// `WOW_CAPTURE=list` — the harness scenario names `scripts/visual.sh` reads, printed before any
 /// window or asset setup. Answers nothing in a player build, which has no scenarios.
 pub(crate) fn print_scenario_names() {
@@ -51,6 +53,7 @@ impl Plugin for DevToolsPlugin {
         #[cfg(feature = "dev")]
         {
             app.add_plugins(crate::debug_panel::DebugPanelPlugin)
+                .add_plugins(m2studio::RemasterPlugin)
                 .add_plugins(crate::perf::PerfPlugin)
                 // `WOW_FX_CENSUS=1`: where this frame's particle draws are addressed, and whether
                 // the view they name is switched on (decision 0775). An instrument, and one that
