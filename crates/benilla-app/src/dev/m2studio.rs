@@ -17,6 +17,7 @@ pub(crate) use capture::M2StudioPlugin;
 
 const FRAMING_MARGIN: f32 = 1.12;
 const STUDIO_FOV: f32 = 45.0_f32.to_radians();
+const STUDIO_CAPTURE_ENV: [(&str, &str); 2] = [("WOW_CAPTURE", "m2studio"), ("WOW_STATIC_GX", "0")];
 
 fn is_m2_path(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
@@ -430,8 +431,11 @@ fn start_capture(
     let out_dir = capture_output_dir(&exe, &selection.model_path);
     prepare_output_dir(&out_dir)?;
 
-    let child = Command::new(&exe)
-        .env("WOW_CAPTURE", "m2studio")
+    let mut command = Command::new(&exe);
+    for (key, value) in STUDIO_CAPTURE_ENV {
+        command.env(key, value);
+    }
+    let child = command
         .env("WOW_M2_MODEL", &selection.model_path)
         .env("WOW_M2_OUT_DIR", &out_dir)
         .env_remove("WOW_CAPTURE_OUT")
@@ -653,6 +657,11 @@ mod tests {
             camera_eye([1.0, 2.0, 3.0], [0.0, 0.0, -1.0], 10.0),
             [1.0, 2.0, 13.0]
         );
+    }
+
+    #[test]
+    fn studio_child_disables_retained_world_renderer() {
+        assert!(STUDIO_CAPTURE_ENV.contains(&("WOW_STATIC_GX", "0")));
     }
 
     #[test]
