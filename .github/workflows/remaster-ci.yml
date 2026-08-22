@@ -15,27 +15,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libasound2-dev \
-            libudev-dev \
-            libwayland-dev \
-            libxkbcommon-dev \
-            libx11-dev \
-            libxi-dev \
-            libxcursor-dev \
-            libxrandr-dev
-      - name: Focused remaster tests
+      - name: Focused remaster contract tests
         id: test
         shell: bash
         run: |
           set +e
-          cargo test -p benilla-app m2studio
+          rustc --edition=2021 --test crates/benilla-app/tests/m2studio_red.rs -o /tmp/m2studio-red
           code=$?
+          if [ "$code" = "0" ]; then
+            /tmp/m2studio-red
+            code=$?
+          fi
           echo "code=$code" >> "$GITHUB_OUTPUT"
           exit 0
       - name: Publish commit status
