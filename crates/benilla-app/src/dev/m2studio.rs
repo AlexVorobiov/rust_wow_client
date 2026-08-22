@@ -1,7 +1,19 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
+
+use bevy::prelude::*;
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+
+use benilla_world::interact::WorldObject;
+use benilla_world::model_render::ModelKind;
+use benilla_world::modkeys::{dev_chord, DEV_CHORD};
+
+use crate::debug_panel::{overlay_text, MouseoverTarget, OVERLAY_FILL, OVERLAY_TEXT_DIM};
+use crate::ui_script::{InspectMode, UiInput};
 
 const FRAMING_MARGIN: f32 = 1.12;
+const STUDIO_FOV: f32 = 45.0_f32.to_radians();
 
 fn is_m2_path(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
@@ -83,6 +95,13 @@ impl StudioRequest {
             model_path,
             out_dir,
         })
+    }
+
+    fn from_env() -> Result<Self, String> {
+        Self::from_env_values(
+            std::env::var_os("WOW_M2_MODEL"),
+            std::env::var_os("WOW_M2_OUT_DIR"),
+        )
     }
 }
 
@@ -263,10 +282,272 @@ fn capture_completion(
     }
 }
 
+fn prepare_output_dir(out_dir: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(out_dir)
+        .map_err(|e| format!("cannot create {}: {e}", out_dir.display()))?;
+    for view in StudioView::ALL {
+        let path = out_dir.join(view.file_name());
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("cannot remove stale {}: {e}", path.display())),
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+enum RemasterCaptureStatus {
+    Idle,
+    Capturing,
+    Complete { output_dir: PathBuf },
+    Failed { message: String },
+}
+
+impl Default for RemasterCaptureStatus {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
+#[derive(Resource, Default)]
+struct RemasterState {
+    enabled: bool,
+    inspect_before_remaster: Option<bool>,
+    selected: Option<RemasterSelection>,
+    status: RemasterCaptureStatus,
+    selection_message: Option<String>,
+}
+
+struct RunningCapture {
+    child: Child,
+    out_dir: PathBuf,
+}
+
+#[derive(Resource, Default)]
+struct RemasterProcess {
+    running: Option<RunningCapture>,
+}
+
+fn toggle_remaster(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut state: ResMut<RemasterState>,
+    mut inspect: ResMut<InspectMode>,
+) {
+    if !dev_chord(&keys, KeyCode::KeyR) {
+        return;
+    }
+    state.enabled = !state.enabled;
+    if state.enabled {
+        state.inspect_before_remaster = Some(inspect.enabled);
+        inspect.enabled = true;
+        state.selection_message = Some("click a static M2 doodad in the world".to_string());
+    } else {
+        if let Some(previous) = state.inspect_before_remaster.take() {
+            inspect.enabled = previous;
+        }
+        state.selected = None;
+        state.selection_message = None;
+    }
+}
+
+fn maintain_remaster_inspect(state: Res<RemasterState>, mut inspect: ResMut<InspectMode>) {
+    if state.enabled && !inspect.enabled {
+        inspect.enabled = true;
+    }
+}
+
+fn select_hovered_doodad(
+    buttons: Res<ButtonInput<MouseButton>>,
+    mouseover: Res<MouseoverTarget>,
+    objects: Query<&WorldObject>,
+    mut state: ResMut<RemasterState>,
+) {
+    if !state.enabled || !buttons.just_pressed(MouseButton::Left) {
+        return;
+    }
+    let Some(entity) = mouseover.entity else {
+        return;
+    };
+    let Ok(object) = objects.get(entity) else {
+        return;
+    };
+    match selection_from_parts(
+        object.kind == ModelKind::Doodad,
+        &object.label,
+        object.id,
+    ) {
+        Ok(selection) => {
+            state.selection_message = None;
+            state.selected = Some(selection);
+            if !matches!(state.status, RemasterCaptureStatus::Capturing) {
+                state.status = RemasterCaptureStatus::Idle;
+            }
+        }
+        Err(message) => {
+            state.selection_message = Some(message);
+        }
+    }
+}
+
+fn poll_capture(mut process: ResMut<RemasterProcess>, mut state: ResMut<RemasterState>) {
+    let Some(running) = process.running.as_mut() else {
+        return;
+    };
+    let status = match running.child.try_wait() {
+        Ok(Some(status)) => status,
+        Ok(None) => return,
+        Err(e) => {
+            let message = format!("failed to poll capture child: {e}");
+            state.status = RemasterCaptureStatus::Failed { message };
+            process.running = None;
+            return;
+        }
+    };
+
+    let out_dir = running.out_dir.clone();
+    let result = capture_completion(status.success(), |name| out_dir.join(name).is_file());
+    state.status = match result {
+        Ok(()) => RemasterCaptureStatus::Complete { output_dir: out_dir },
+        Err(message) => RemasterCaptureStatus::Failed { message },
+    };
+    process.running = None;
+}
+
+fn start_capture(
+    selection: &RemasterSelection,
+    process: &mut RemasterProcess,
+) -> Result<PathBuf, String> {
+    if process.running.is_some() {
+        return Err("a remaster capture is already running".to_string());
+    }
+    let exe = std::env::current_exe().map_err(|e| format!("cannot resolve current executable: {e}"))?;
+    let out_dir = capture_output_dir(&exe, &selection.model_path);
+    prepare_output_dir(&out_dir)?;
+
+    let child = Command::new(&exe)
+        .env("WOW_CAPTURE", "m2studio")
+        .env("WOW_M2_MODEL", &selection.model_path)
+        .env("WOW_M2_OUT_DIR", &out_dir)
+        .env_remove("WOW_CAPTURE_OUT")
+        .env_remove("WOW_CAPTURE_UI")
+        .spawn()
+        .map_err(|e| format!("cannot launch {}: {e}", exe.display()))?;
+
+    process.running = Some(RunningCapture {
+        child,
+        out_dir: out_dir.clone(),
+    });
+    Ok(out_dir)
+}
+
+fn remaster_ui(
+    mut contexts: EguiContexts,
+    mut state: ResMut<RemasterState>,
+    mut process: ResMut<RemasterProcess>,
+) -> Result {
+    if !state.enabled {
+        return Ok(());
+    }
+    let ctx = contexts.ctx_mut()?;
+    egui::Window::new("Remaster Capture")
+        .resizable(false)
+        .collapsible(false)
+        .default_width(390.0)
+        .frame(egui::Frame::window(&ctx.style()).fill(OVERLAY_FILL))
+        .show(ctx, |ui| {
+            overlay_text(ui);
+            ui.label(
+                egui::RichText::new(format!("mode ON · {DEV_CHORD}+R to exit"))
+                    .small()
+                    .color(OVERLAY_TEXT_DIM),
+            );
+            ui.separator();
+
+            if let Some(selection) = state.selected.clone() {
+                ui.label(egui::RichText::new("Selected M2").strong());
+                ui.label(&selection.model_path);
+                ui.label(
+                    egui::RichText::new(format!("placement id {}", selection.placement_id))
+                        .small()
+                        .color(OVERLAY_TEXT_DIM),
+                );
+                ui.add_space(6.0);
+
+                let busy = matches!(state.status, RemasterCaptureStatus::Capturing);
+                let label = if matches!(state.status, RemasterCaptureStatus::Complete { .. }) {
+                    "Re-capture 4 Views"
+                } else {
+                    "Capture 4 Views"
+                };
+                if ui.add_enabled(!busy, egui::Button::new(label)).clicked() {
+                    match start_capture(&selection, &mut process) {
+                        Ok(_) => state.status = RemasterCaptureStatus::Capturing,
+                        Err(message) => {
+                            state.status = RemasterCaptureStatus::Failed { message };
+                        }
+                    }
+                }
+            } else {
+                ui.label("No M2 selected");
+            }
+
+            if let Some(message) = &state.selection_message {
+                ui.label(egui::RichText::new(message).small().color(OVERLAY_TEXT_DIM));
+            }
+            ui.separator();
+            match &state.status {
+                RemasterCaptureStatus::Idle => {
+                    ui.label("Status: idle");
+                }
+                RemasterCaptureStatus::Capturing => {
+                    ui.label("Status: capturing…");
+                }
+                RemasterCaptureStatus::Complete { output_dir } => {
+                    ui.label("Status: complete");
+                    ui.label(
+                        egui::RichText::new(output_dir.display().to_string())
+                            .small()
+                            .color(OVERLAY_TEXT_DIM),
+                    );
+                }
+                RemasterCaptureStatus::Failed { message } => {
+                    ui.label("Status: failed");
+                    ui.label(egui::RichText::new(message).small().color(OVERLAY_TEXT_DIM));
+                }
+            }
+        });
+    Ok(())
+}
+
+pub(crate) struct RemasterPlugin;
+
+impl Plugin for RemasterPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<RemasterState>()
+            .init_resource::<RemasterProcess>()
+            .add_systems(
+                Update,
+                (
+                    toggle_remaster,
+                    maintain_remaster_inspect,
+                    select_hovered_doodad,
+                    poll_capture,
+                )
+                    .chain()
+                    .after(UiInput),
+            )
+            .add_systems(EguiPrimaryContextPass, remaster_ui);
+    }
+}
+
+pub(crate) fn capture_requested() -> bool {
+    std::env::var("WOW_CAPTURE").as_deref() == Ok("m2studio")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     #[test]
     fn model_path_accepts_m2_and_mdx_case_insensitively() {
@@ -351,7 +632,7 @@ mod tests {
             min: [-1.0, -12.0, -2.0],
             max: [1.0, 12.0, 2.0],
         };
-        let fov = 45_f32.to_radians();
+        let fov = STUDIO_FOV;
         let wide_d = camera_distance(&wide, [0.0, 0.0, -1.0], fov, 16.0 / 9.0).unwrap();
         let tall_d = camera_distance(&tall, [0.0, 0.0, -1.0], fov, 16.0 / 9.0).unwrap();
         assert!(wide_d > 13.0, "wide box distance: {wide_d}");
