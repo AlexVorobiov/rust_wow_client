@@ -78,6 +78,7 @@ impl StudioRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn model_path_accepts_m2_and_mdx_case_insensitively() {
@@ -117,5 +118,66 @@ mod tests {
             Some("target/remaster".into()),
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn selection_accepts_only_doodad_m2s() {
+        assert!(selection_from_parts(true, r"World\Tree.m2", 7).is_ok());
+        assert!(selection_from_parts(false, r"World\Tree.m2", 7).is_err());
+        assert!(selection_from_parts(true, r"World\House.wmo", 7).is_err());
+    }
+
+    #[test]
+    fn output_dir_is_anchored_to_the_executables_target_directory() {
+        let dir = capture_output_dir(
+            Path::new("/repo/target/debug/benilla"),
+            r"World\Generic\Tree\Oak01.m2",
+        );
+        assert_eq!(
+            dir,
+            Path::new("/repo/target/remaster-captures/world_generic_tree_oak01_m2")
+        );
+    }
+
+    #[test]
+    fn bounds_union_tracks_all_extrema() {
+        let mut b = StudioBounds::empty();
+        b.include([-2.0, 3.0, 1.0]);
+        b.include([5.0, -4.0, 7.0]);
+        assert_eq!(b.min, [-2.0, -4.0, 1.0]);
+        assert_eq!(b.max, [5.0, 3.0, 7.0]);
+        assert_eq!(b.center(), [1.5, -0.5, 4.0]);
+    }
+
+    #[test]
+    fn camera_fit_contains_wide_and_tall_boxes_with_margin() {
+        let wide = StudioBounds {
+            min: [-10.0, -1.0, -2.0],
+            max: [10.0, 1.0, 2.0],
+        };
+        let tall = StudioBounds {
+            min: [-1.0, -12.0, -2.0],
+            max: [1.0, 12.0, 2.0],
+        };
+        let fov = 45_f32.to_radians();
+        let wide_d = camera_distance(&wide, [0.0, 0.0, -1.0], fov, 16.0 / 9.0).unwrap();
+        let tall_d = camera_distance(&tall, [0.0, 0.0, -1.0], fov, 16.0 / 9.0).unwrap();
+        assert!(wide_d > 13.0, "wide box distance: {wide_d}");
+        assert!(tall_d > 32.0, "tall box distance: {tall_d}");
+    }
+
+    #[test]
+    fn camera_eye_is_opposite_the_forward_vector() {
+        assert_eq!(
+            camera_eye([1.0, 2.0, 3.0], [0.0, 0.0, -1.0], 10.0),
+            [1.0, 2.0, 13.0]
+        );
+    }
+
+    #[test]
+    fn completion_requires_success_and_all_four_images() {
+        assert!(capture_completion(false, |_| true).is_err());
+        assert!(capture_completion(true, |name| name != "left.png").is_err());
+        assert!(capture_completion(true, |_| true).is_ok());
     }
 }
