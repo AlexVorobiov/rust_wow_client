@@ -29,4 +29,4 @@ jobs:
             libxcursor-dev \
             libxrandr-dev
       - name: Focused remaster tests
-        run: cargo test -p benilla-app m2studio --lib
+        run: cargo test -p benilla-app m2studio
