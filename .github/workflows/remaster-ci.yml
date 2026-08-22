@@ -9,19 +9,32 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   remaster:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref_name || github.event.pull_request.head.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+      - name: Format branch
+        if: github.event_name == 'push'
+        run: |
+          cargo fmt --all
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -- '*.rs'
+            git commit -m "style: apply rustfmt to remaster capture"
+            git push origin HEAD:feat/m2-remaster-capture
+          fi
       - name: Install native build dependencies
         run: |
           sudo apt-get update
