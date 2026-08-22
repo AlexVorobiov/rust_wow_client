@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
   remaster:
@@ -29,4 +30,32 @@ jobs:
             libxcursor-dev \
             libxrandr-dev
       - name: Focused remaster tests
-        run: cargo test -p benilla-app m2studio
+        id: test
+        shell: bash
+        run: |
+          set +e
+          cargo test -p benilla-app m2studio
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Publish commit status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TEST_CODE: ${{ steps.test.outputs.code }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$TEST_CODE" = "0" ]; then
+            state=success
+            description="focused remaster tests passed"
+          else
+            state=failure
+            description="focused remaster tests failed"
+          fi
+          gh api -X POST "repos/$REPO/statuses/$SHA" \
+            -f state="$state" \
+            -f context="remaster-ci/focused" \
+            -f description="$description" \
+            -f target_url="$RUN_URL"
+          exit "$TEST_CODE"
