@@ -1,5 +1,7 @@
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+const FRAMING_MARGIN: f32 = 1.12;
 
 fn is_m2_path(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
@@ -48,6 +50,15 @@ impl StudioView {
             Self::Left => "left.png",
         }
     }
+
+    fn forward(self) -> [f32; 3] {
+        match self {
+            Self::Front => [0.0, 0.0, -1.0],
+            Self::Right => [-1.0, 0.0, 0.0],
+            Self::Back => [0.0, 0.0, 1.0],
+            Self::Left => [1.0, 0.0, 0.0],
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -72,6 +83,183 @@ impl StudioRequest {
             model_path,
             out_dir,
         })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RemasterSelection {
+    model_path: String,
+    placement_id: u32,
+}
+
+fn selection_from_parts(
+    is_doodad: bool,
+    model_path: &str,
+    placement_id: u32,
+) -> Result<RemasterSelection, String> {
+    if !is_doodad {
+        return Err("Remaster Capture v1 accepts static doodads only".to_string());
+    }
+    if !is_m2_path(model_path) {
+        return Err(format!("not an M2/MDX doodad: {model_path}"));
+    }
+    Ok(RemasterSelection {
+        model_path: model_path.to_string(),
+        placement_id,
+    })
+}
+
+fn capture_output_dir(exe: &Path, model_path: &str) -> PathBuf {
+    let target = exe
+        .parent()
+        .and_then(Path::parent)
+        .filter(|dir| dir.file_name().is_some_and(|name| name == "target"))
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("target"));
+    target
+        .join("remaster-captures")
+        .join(model_output_stem(model_path))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct StudioBounds {
+    min: [f32; 3],
+    max: [f32; 3],
+}
+
+impl StudioBounds {
+    fn empty() -> Self {
+        Self {
+            min: [f32::INFINITY; 3],
+            max: [f32::NEG_INFINITY; 3],
+        }
+    }
+
+    fn include(&mut self, point: [f32; 3]) {
+        for axis in 0..3 {
+            self.min[axis] = self.min[axis].min(point[axis]);
+            self.max[axis] = self.max[axis].max(point[axis]);
+        }
+    }
+
+    fn is_valid(&self) -> bool {
+        (0..3).all(|axis| {
+            self.min[axis].is_finite()
+                && self.max[axis].is_finite()
+                && self.max[axis] > self.min[axis]
+        })
+    }
+
+    fn center(&self) -> [f32; 3] {
+        [
+            (self.min[0] + self.max[0]) * 0.5,
+            (self.min[1] + self.max[1]) * 0.5,
+            (self.min[2] + self.max[2]) * 0.5,
+        ]
+    }
+
+    fn corners(&self) -> [[f32; 3]; 8] {
+        let [x0, y0, z0] = self.min;
+        let [x1, y1, z1] = self.max;
+        [
+            [x0, y0, z0],
+            [x0, y0, z1],
+            [x0, y1, z0],
+            [x0, y1, z1],
+            [x1, y0, z0],
+            [x1, y0, z1],
+            [x1, y1, z0],
+            [x1, y1, z1],
+        ]
+    }
+}
+
+fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn normalize(v: [f32; 3]) -> Option<[f32; 3]> {
+    let len_sq = dot(v, v);
+    if !len_sq.is_finite() || len_sq <= f32::EPSILON {
+        return None;
+    }
+    let inv = len_sq.sqrt().recip();
+    Some([v[0] * inv, v[1] * inv, v[2] * inv])
+}
+
+fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn camera_distance(
+    bounds: &StudioBounds,
+    forward: [f32; 3],
+    vertical_fov: f32,
+    aspect: f32,
+) -> Option<f32> {
+    if !bounds.is_valid()
+        || !vertical_fov.is_finite()
+        || vertical_fov <= 0.0
+        || vertical_fov >= std::f32::consts::PI
+        || !aspect.is_finite()
+        || aspect <= 0.0
+    {
+        return None;
+    }
+
+    let forward = normalize(forward)?;
+    let right = normalize(cross(forward, [0.0, 1.0, 0.0]))?;
+    let up = normalize(cross(right, forward))?;
+    let tan_v = (vertical_fov * 0.5).tan();
+    let tan_h = tan_v * aspect;
+    let center = bounds.center();
+    let mut distance = 0.0f32;
+
+    for corner in bounds.corners() {
+        let rel = sub(corner, center);
+        let x = dot(rel, right).abs();
+        let y = dot(rel, up).abs();
+        let z = dot(rel, forward);
+        let required = (x / tan_h).max(y / tan_v) - z;
+        distance = distance.max(required);
+    }
+
+    let distance = distance * FRAMING_MARGIN;
+    (distance.is_finite() && distance > 0.0).then_some(distance)
+}
+
+fn camera_eye(center: [f32; 3], forward: [f32; 3], distance: f32) -> [f32; 3] {
+    [
+        center[0] - forward[0] * distance,
+        center[1] - forward[1] * distance,
+        center[2] - forward[2] * distance,
+    ]
+}
+
+fn capture_completion(
+    exit_success: bool,
+    mut exists: impl FnMut(&str) -> bool,
+) -> Result<(), String> {
+    if !exit_success {
+        return Err("capture child exited unsuccessfully".to_string());
+    }
+    let missing: Vec<_> = StudioView::ALL
+        .iter()
+        .map(|view| view.file_name())
+        .filter(|name| !exists(name))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("capture child omitted: {}", missing.join(", ")))
     }
 }
 
@@ -102,6 +290,10 @@ mod tests {
             names,
             ["front.png", "right.png", "back.png", "left.png"]
         );
+        assert_eq!(StudioView::Front.forward(), [0.0, 0.0, -1.0]);
+        assert_eq!(StudioView::Right.forward(), [-1.0, 0.0, 0.0]);
+        assert_eq!(StudioView::Back.forward(), [0.0, 0.0, 1.0]);
+        assert_eq!(StudioView::Left.forward(), [1.0, 0.0, 0.0]);
     }
 
     #[test]
