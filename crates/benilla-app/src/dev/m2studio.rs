@@ -1,3 +1,80 @@
+use std::ffi::OsString;
+use std::path::PathBuf;
+
+fn is_m2_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.ends_with(".m2") || lower.ends_with(".mdx")
+}
+
+fn model_output_stem(model_path: &str) -> String {
+    let mut out = String::with_capacity(model_path.len());
+    let mut separator = false;
+
+    for ch in model_path.chars() {
+        if ch.is_ascii_alphanumeric() {
+            if separator && !out.is_empty() {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+            separator = false;
+        } else {
+            separator = true;
+        }
+    }
+
+    if out.is_empty() {
+        "model".to_string()
+    } else {
+        out
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StudioView {
+    Front,
+    Right,
+    Back,
+    Left,
+}
+
+impl StudioView {
+    const ALL: [Self; 4] = [Self::Front, Self::Right, Self::Back, Self::Left];
+
+    fn file_name(self) -> &'static str {
+        match self {
+            Self::Front => "front.png",
+            Self::Right => "right.png",
+            Self::Back => "back.png",
+            Self::Left => "left.png",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StudioRequest {
+    model_path: String,
+    out_dir: PathBuf,
+}
+
+impl StudioRequest {
+    fn from_env_values(model: Option<OsString>, out: Option<OsString>) -> Result<Self, String> {
+        let model_path = model
+            .ok_or_else(|| "WOW_M2_MODEL is required".to_string())?
+            .into_string()
+            .map_err(|_| "WOW_M2_MODEL must be valid UTF-8".to_string())?;
+        if !is_m2_path(&model_path) {
+            return Err(format!("WOW_M2_MODEL is not an M2/MDX path: {model_path}"));
+        }
+        let out_dir = out
+            .ok_or_else(|| "WOW_M2_OUT_DIR is required".to_string())?
+            .into();
+        Ok(Self {
+            model_path,
+            out_dir,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
