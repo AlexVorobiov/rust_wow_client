@@ -16,6 +16,7 @@ use benilla_world::lighting::LightBlob;
 use benilla_world::mat_anim_table::MatAnimTable;
 use benilla_world::model_forms::ModelForms;
 use benilla_world::model_render::{MaterialCache, ShadeSel};
+use benilla_world::schedule::WorldStage;
 use benilla_world::terrain_stream::{m2_anim_bound, m2_fade, spawn_model_entities};
 use benilla_world::view::WorldCamera;
 
@@ -118,9 +119,12 @@ impl Plugin for M2StudioPlugin {
                 failure: None,
             })
             .add_systems(Startup, setup_studio)
+            .add_systems(Update, spawn_subject)
             .add_systems(
                 Update,
-                (spawn_subject, isolate_studio_cameras, pin_studio_camera).chain(),
+                (isolate_studio_cameras, pin_studio_camera)
+                    .chain()
+                    .in_set(WorldStage::Present),
             )
             .add_systems(Last, drive_capture);
     }
