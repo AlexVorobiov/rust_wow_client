@@ -24,6 +24,39 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+      - name: Apply studio isolation fix
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path("crates/benilla-app/src/dev/m2studio.rs")
+          s = p.read_text(encoding="utf-8")
+
+          const_anchor = 'const STUDIO_FOV: f32 = 45.0_f32.to_radians();\n'
+          const_decl = 'const STUDIO_CAPTURE_ENV: [(&str, &str); 2] = [("WOW_CAPTURE", "m2studio"), ("WOW_STATIC_GX", "0")];\n'
+          if const_decl not in s:
+              if const_anchor not in s:
+                  raise SystemExit("m2studio constant anchor not found")
+              s = s.replace(const_anchor, const_anchor + const_decl, 1)
+
+          old = '''    let child = Command::new(&exe)\n        .env("WOW_CAPTURE", "m2studio")\n        .env("WOW_M2_MODEL", &selection.model_path)\n        .env("WOW_M2_OUT_DIR", &out_dir)\n        .env_remove("WOW_CAPTURE_OUT")\n        .env_remove("WOW_CAPTURE_UI")\n        .spawn()\n        .map_err(|e| format!("cannot launch {}: {e}", exe.display()))?;'''
+          new = '''    let mut command = Command::new(&exe);\n    for (key, value) in STUDIO_CAPTURE_ENV {\n        command.env(key, value);\n    }\n    let child = command\n        .env("WOW_M2_MODEL", &selection.model_path)\n        .env("WOW_M2_OUT_DIR", &out_dir)\n        .env_remove("WOW_CAPTURE_OUT")\n        .env_remove("WOW_CAPTURE_UI")\n        .spawn()\n        .map_err(|e| format!("cannot launch {}: {e}", exe.display()))?;'''
+          if new not in s:
+              if old not in s:
+                  raise SystemExit("start_capture command anchor not found")
+              s = s.replace(old, new, 1)
+
+          test_anchor = '''    #[test]\n    fn completion_requires_success_and_all_four_images() {'''
+          test = '''    #[test]\n    fn studio_child_disables_retained_world_renderer() {\n        assert!(STUDIO_CAPTURE_ENV.contains(&("WOW_STATIC_GX", "0")));\n    }\n\n'''
+          if test not in s:
+              if test_anchor not in s:
+                  raise SystemExit("m2studio test anchor not found")
+              s = s.replace(test_anchor, test + test_anchor, 1)
+
+          p.write_text(s, encoding="utf-8")
+          PY
       - name: Format branch
         if: github.event_name == 'push'
         run: |
@@ -32,7 +65,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add -- '*.rs'
-            git commit -m "style: apply rustfmt to remaster capture"
+            git commit -m "fix: isolate M2 studio from retained world renderer"
             git push origin HEAD:feat/m2-remaster-capture
           fi
       - name: Install native build dependencies
