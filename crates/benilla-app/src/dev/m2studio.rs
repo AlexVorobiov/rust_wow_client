@@ -380,11 +380,7 @@ fn select_hovered_doodad(
     let Ok(object) = objects.get(entity) else {
         return;
     };
-    match selection_from_parts(
-        object.kind == ModelKind::Doodad,
-        &object.label,
-        object.id,
-    ) {
+    match selection_from_parts(object.kind == ModelKind::Doodad, &object.label, object.id) {
         Ok(selection) => {
             state.selection_message = None;
             state.selected = Some(selection);
@@ -414,7 +410,9 @@ fn poll_capture(mut process: ResMut<RemasterProcess>, mut state: ResMut<Remaster
     let out_dir = running.out_dir.clone();
     let result = capture_completion(status.success(), |name| out_dir.join(name).is_file());
     state.status = match result {
-        Ok(()) => RemasterCaptureStatus::Complete { output_dir: out_dir },
+        Ok(()) => RemasterCaptureStatus::Complete {
+            output_dir: out_dir,
+        },
         Err(message) => RemasterCaptureStatus::Failed { message },
     };
     process.running = None;
@@ -427,7 +425,8 @@ fn start_capture(
     if process.running.is_some() {
         return Err("a remaster capture is already running".to_string());
     }
-    let exe = std::env::current_exe().map_err(|e| format!("cannot resolve current executable: {e}"))?;
+    let exe =
+        std::env::current_exe().map_err(|e| format!("cannot resolve current executable: {e}"))?;
     let out_dir = capture_output_dir(&exe, &selection.model_path);
     prepare_output_dir(&out_dir)?;
 
@@ -569,10 +568,7 @@ mod tests {
     #[test]
     fn canonical_views_have_exact_names_and_order() {
         let names: Vec<_> = StudioView::ALL.iter().map(|v| v.file_name()).collect();
-        assert_eq!(
-            names,
-            ["front.png", "right.png", "back.png", "left.png"]
-        );
+        assert_eq!(names, ["front.png", "right.png", "back.png", "left.png"]);
         assert_eq!(StudioView::Front.forward(), [0.0, 0.0, -1.0]);
         assert_eq!(StudioView::Right.forward(), [-1.0, 0.0, 0.0]);
         assert_eq!(StudioView::Back.forward(), [0.0, 0.0, 1.0]);
