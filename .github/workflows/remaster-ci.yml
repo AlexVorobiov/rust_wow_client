@@ -7,25 +7,12 @@ on:
 
 permissions:
   contents: read
-  statuses: write
 
 jobs:
   remaster:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Publish pending status
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          SHA: ${{ github.sha }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          gh api -X POST "repos/$REPO/statuses/$SHA" \
-            -f state="pending" \
-            -f context="remaster-ci/focused" \
-            -f description="remaster integration compiling" \
-            -f target_url="$RUN_URL"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -45,32 +32,4 @@ jobs:
             libxcursor-dev \
             libxrandr-dev
       - name: Compile remaster integration
-        id: check
-        shell: bash
-        run: |
-          set +e
-          cargo check -p benilla-app
-          code=$?
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          exit 0
-      - name: Publish commit status
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CHECK_CODE: ${{ steps.check.outputs.code }}
-          REPO: ${{ github.repository }}
-          SHA: ${{ github.sha }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          if [ "$CHECK_CODE" = "0" ]; then
-            state=success
-            description="remaster integration compiled"
-          else
-            state=failure
-            description="remaster integration compile failed"
-          fi
-          gh api -X POST "repos/$REPO/statuses/$SHA" \
-            -f state="$state" \
-            -f context="remaster-ci/focused" \
-            -f description="$description" \
-            -f target_url="$RUN_URL"
-          exit "$CHECK_CODE"
+        run: cargo check -p benilla-app
