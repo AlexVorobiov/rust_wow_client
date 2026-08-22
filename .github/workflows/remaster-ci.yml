@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - feat/m2-remaster-capture
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -31,5 +34,11 @@ jobs:
             libxi-dev \
             libxcursor-dev \
             libxrandr-dev
-      - name: Compile remaster integration
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run focused remaster tests
+        run: cargo test -p benilla-app m2studio --lib
+      - name: Check benilla-app
         run: cargo check -p benilla-app
+      - name: Build player seam
+        run: cargo build -p benilla --no-default-features
