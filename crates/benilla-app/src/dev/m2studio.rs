@@ -50,17 +50,25 @@ fn model_output_stem(model_path: &str) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StudioView {
     Front,
+    FrontThreeQuarter,
     Right,
     Back,
     Left,
 }
 
 impl StudioView {
-    const ALL: [Self; 4] = [Self::Front, Self::Right, Self::Back, Self::Left];
+    const ALL: [Self; 5] = [
+        Self::Front,
+        Self::FrontThreeQuarter,
+        Self::Right,
+        Self::Back,
+        Self::Left,
+    ];
 
     fn file_name(self) -> &'static str {
         match self {
             Self::Front => "front.png",
+            Self::FrontThreeQuarter => "front_3q.png",
             Self::Right => "right.png",
             Self::Back => "back.png",
             Self::Left => "left.png",
@@ -70,6 +78,11 @@ impl StudioView {
     fn forward(self) -> [f32; 3] {
         match self {
             Self::Front => [0.0, 0.0, -1.0],
+            Self::FrontThreeQuarter => [
+                -std::f32::consts::FRAC_1_SQRT_2,
+                0.0,
+                -std::f32::consts::FRAC_1_SQRT_2,
+            ],
             Self::Right => [-1.0, 0.0, 0.0],
             Self::Back => [0.0, 0.0, 1.0],
             Self::Left => [1.0, 0.0, 0.0],
@@ -485,9 +498,9 @@ fn remaster_ui(
 
                 let busy = matches!(state.status, RemasterCaptureStatus::Capturing);
                 let label = if matches!(state.status, RemasterCaptureStatus::Complete { .. }) {
-                    "Re-capture 4 Views"
+                    "Re-capture 5 Views"
                 } else {
-                    "Capture 4 Views"
+                    "Capture 5 Views"
                 };
                 if ui.add_enabled(!busy, egui::Button::new(label)).clicked() {
                     match start_capture(&selection, &mut process) {
@@ -572,8 +585,25 @@ mod tests {
     #[test]
     fn canonical_views_have_exact_names_and_order() {
         let names: Vec<_> = StudioView::ALL.iter().map(|v| v.file_name()).collect();
-        assert_eq!(names, ["front.png", "right.png", "back.png", "left.png"]);
+        assert_eq!(
+            names,
+            [
+                "front.png",
+                "front_3q.png",
+                "right.png",
+                "back.png",
+                "left.png"
+            ]
+        );
         assert_eq!(StudioView::Front.forward(), [0.0, 0.0, -1.0]);
+        assert_eq!(
+            StudioView::FrontThreeQuarter.forward(),
+            [
+                -std::f32::consts::FRAC_1_SQRT_2,
+                0.0,
+                -std::f32::consts::FRAC_1_SQRT_2,
+            ]
+        );
         assert_eq!(StudioView::Right.forward(), [-1.0, 0.0, 0.0]);
         assert_eq!(StudioView::Back.forward(), [0.0, 0.0, 1.0]);
         assert_eq!(StudioView::Left.forward(), [1.0, 0.0, 0.0]);
@@ -665,7 +695,7 @@ mod tests {
     }
 
     #[test]
-    fn completion_requires_success_and_all_four_images() {
+    fn completion_requires_success_and_all_five_images() {
         assert!(capture_completion(false, |_| true).is_err());
         assert!(capture_completion(true, |name| name != "left.png").is_err());
         assert!(capture_completion(true, |_| true).is_ok());
