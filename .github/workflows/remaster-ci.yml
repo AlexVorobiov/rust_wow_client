@@ -37,7 +37,6 @@ jobs:
             libxcursor-dev \
             libxrandr-dev
       - name: Apply studio isolation fix
-        if: github.event_name == 'push'
         shell: bash
         run: |
           python - <<'PY'
@@ -70,7 +69,6 @@ jobs:
           p.write_text(s, encoding="utf-8")
           PY
       - name: Add failing three-quarter regression expectation
-        if: github.event_name == 'push'
         shell: bash
         run: |
           python - <<'PY'
@@ -92,7 +90,6 @@ jobs:
           Path("/tmp/m2studio-needs-3q-red").write_text("1")
           PY
       - name: Verify three-quarter regression is RED
-        if: github.event_name == 'push'
         shell: bash
         run: |
           if [[ ! -f /tmp/m2studio-needs-3q-red ]]; then
@@ -112,7 +109,6 @@ jobs:
             exit 1
           }
       - name: Implement front three-quarter capture
-        if: github.event_name == 'push'
         shell: bash
         run: |
           python - <<'PY'
@@ -166,7 +162,6 @@ jobs:
           p.write_text(s, encoding="utf-8")
           PY
       - name: Format and commit branch patch
-        if: github.event_name == 'push'
         run: |
           cargo fmt --all
           if ! git diff --quiet; then
