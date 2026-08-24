@@ -24,19 +24,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libasound2-dev \
-            libudev-dev \
-            libwayland-dev \
-            libxkbcommon-dev \
-            libx11-dev \
-            libxi-dev \
-            libxcursor-dev \
-            libxrandr-dev
       - name: Apply studio isolation fix
+        if: github.event_name == 'push'
         shell: bash
         run: |
           python - <<'PY'
@@ -68,109 +57,29 @@ jobs:
 
           p.write_text(s, encoding="utf-8")
           PY
-      - name: Add failing three-quarter regression expectation
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          p = Path("crates/benilla-app/src/dev/m2studio.rs")
-          s = p.read_text(encoding="utf-8")
-          if "FrontThreeQuarter" in s:
-              print("three-quarter production code already present; RED step not required")
-              raise SystemExit(0)
-
-          old = '        assert_eq!(names, ["front.png", "right.png", "back.png", "left.png"]);'
-          new = '        assert_eq!(names, ["front.png", "front_3q.png", "right.png", "back.png", "left.png"]);'
-          if new not in s:
-              if old not in s:
-                  raise SystemExit("canonical view expectation anchor not found")
-              s = s.replace(old, new, 1)
-          p.write_text(s, encoding="utf-8")
-          Path("/tmp/m2studio-needs-3q-red").write_text("1")
-          PY
-      - name: Verify three-quarter regression is RED
-        shell: bash
-        run: |
-          if [[ ! -f /tmp/m2studio-needs-3q-red ]]; then
-            echo "production code already contains the 3/4 view; skipping historical RED verification"
-            exit 0
-          fi
-          set +e
-          cargo test -p benilla-app canonical_views_have_exact_names_and_order --lib 2>&1 | tee /tmp/m2studio-red.log
-          status=${PIPESTATUS[0]}
-          set -e
-          if [[ $status -eq 0 ]]; then
-            echo "expected the 5-view regression test to fail before production code"
-            exit 1
-          fi
-          grep -q 'front_3q.png' /tmp/m2studio-red.log || {
-            echo "RED failure did not mention the missing front_3q.png expectation"
-            exit 1
-          }
-      - name: Implement front three-quarter capture
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          p = Path("crates/benilla-app/src/dev/m2studio.rs")
-          s = p.read_text(encoding="utf-8")
-
-          old_enum = '''enum StudioView {\n    Front,\n    Right,\n    Back,\n    Left,\n}'''
-          new_enum = '''enum StudioView {\n    Front,\n    FrontThreeQuarter,\n    Right,\n    Back,\n    Left,\n}'''
-          if new_enum not in s:
-              if old_enum not in s:
-                  raise SystemExit("StudioView enum anchor not found")
-              s = s.replace(old_enum, new_enum, 1)
-
-          old_all = '    const ALL: [Self; 4] = [Self::Front, Self::Right, Self::Back, Self::Left];'
-          new_all = '''    const ALL: [Self; 5] = [\n        Self::Front,\n        Self::FrontThreeQuarter,\n        Self::Right,\n        Self::Back,\n        Self::Left,\n    ];'''
-          if new_all not in s:
-              if old_all not in s:
-                  raise SystemExit("StudioView::ALL anchor not found")
-              s = s.replace(old_all, new_all, 1)
-
-          old_file = '''            Self::Front => "front.png",\n            Self::Right => "right.png",'''
-          new_file = '''            Self::Front => "front.png",\n            Self::FrontThreeQuarter => "front_3q.png",\n            Self::Right => "right.png",'''
-          if new_file not in s:
-              if old_file not in s:
-                  raise SystemExit("StudioView file_name anchor not found")
-              s = s.replace(old_file, new_file, 1)
-
-          old_forward = '''            Self::Front => [0.0, 0.0, -1.0],\n            Self::Right => [-1.0, 0.0, 0.0],'''
-          new_forward = '''            Self::Front => [0.0, 0.0, -1.0],\n            Self::FrontThreeQuarter => [\n                -std::f32::consts::FRAC_1_SQRT_2,\n                0.0,\n                -std::f32::consts::FRAC_1_SQRT_2,\n            ],\n            Self::Right => [-1.0, 0.0, 0.0],'''
-          if new_forward not in s:
-              if old_forward not in s:
-                  raise SystemExit("StudioView forward anchor not found")
-              s = s.replace(old_forward, new_forward, 1)
-
-          s = s.replace('"Re-capture 4 Views"', '"Re-capture 5 Views"')
-          s = s.replace('"Capture 4 Views"', '"Capture 5 Views"')
-          s = s.replace(
-              'fn completion_requires_success_and_all_four_images()',
-              'fn completion_requires_success_and_all_five_images()',
-          )
-
-          assertion_anchor = '        assert_eq!(StudioView::Front.forward(), [0.0, 0.0, -1.0]);\n'
-          assertion = '''        assert_eq!(\n            StudioView::FrontThreeQuarter.forward(),\n            [\n                -std::f32::consts::FRAC_1_SQRT_2,\n                0.0,\n                -std::f32::consts::FRAC_1_SQRT_2,\n            ]\n        );\n'''
-          if assertion not in s:
-              if assertion_anchor not in s:
-                  raise SystemExit("canonical forward assertion anchor not found")
-              s = s.replace(assertion_anchor, assertion_anchor + assertion, 1)
-
-          p.write_text(s, encoding="utf-8")
-          PY
-      - name: Format and commit branch patch
+      - name: Format branch
+        if: github.event_name == 'push'
         run: |
           cargo fmt --all
           if ! git diff --quiet; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add -- '*.rs'
-            git commit -m "feat: add front three-quarter M2 capture"
+            git commit -m "fix: isolate M2 studio from retained world renderer"
             git push origin HEAD:feat/m2-remaster-capture
           fi
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libudev-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libx11-dev \
+            libxi-dev \
+            libxcursor-dev \
+            libxrandr-dev
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Run focused remaster tests
